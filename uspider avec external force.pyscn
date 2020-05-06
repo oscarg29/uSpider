@@ -1,0 +1,144 @@
+import Sofa, numpy
+from splib.constants import Key
+from math import sin, cos, sqrt
+from splib.animation import AnimationManager
+
+PI = 3.14159265359
+
+######################################################
+#Definition du controleur pour les mouvements du robot 
+######################################################
+class MyController(Sofa.PythonScriptController):
+        def __init__(self, node, mecaObj, extFor):
+                self.node = node
+                self.mo = mecaObj
+                self.extf = extFor
+        
+        
+        def onKeyPressed(self, key):
+            position = numpy.round(self.mo.position[0],4)
+            print('Position = ' + str(position))
+            print('Force = ' + str(self.extf.forces) + '\n')
+            extForListBuf = self.extf.forces;
+
+            #external force:              
+            if key == Key.leftarrow: # mouvements suivant l'axe X
+                extForListBuf[0][0] = self.extf.forces[0][0]-10e3;
+            elif key == Key.rightarrow:
+                extForListBuf[0][0] = self.extf.forces[0][0]+10e3;
+                
+            if key == Key.uparrow:      # mouvements suivant l'axe Y
+                extForListBuf[0][1] = self.extf.forces[0][1]+10e3;
+            elif key == Key.downarrow:
+                extForListBuf[0][1] = self.extf.forces[0][1]-10e3;
+                
+            if key == Key.plus:      # mouvements suivant l'axe Z
+                extForListBuf[0][2] = self.extf.forces[0][2]+10e3;
+            elif key == Key.minus:
+                extForListBuf[0][2] = self.extf.forces[0][2]-10e3;
+            
+            
+            self.extf.forces = extForListBuf;
+
+
+######################################################
+# Definition de la scene du robot
+######################################################
+def createScene(rootNode):		#Creation des nodes en Sofa
+    
+    rootNode.gravity=('0 0 -9810')
+    rootNode.createObject('RequiredPlugin',pluginName='SoftRobots BeamAdapter SofaPython SofaSparseSolver')
+    
+    AnimationManager(rootNode)
+    
+    rootNode.createObject('VisualStyle', displayFlags='showVisualModels showBehaviorModels hideCollisionModels hideMappings showForceFields showInteractionForceFields')
+    rootNode.createObject('FreeMotionAnimationLoop')
+    rootNode.createObject('QPInverseProblemSolver')
+    
+    
+    ########################################
+    # Creation du modele mecanique du robot#
+    ########################################
+    MecaModelNode = rootNode.createChild('MecaModel')
+    MecaModelNode.createObject('EulerImplicitSolver', rayleighStiffness=0.2, printLog=False, rayleighMass=0.1)      #Parametres de convergence
+    MecaModelNode.createObject('SparseLDLSolver', name='ldl')
+    MecaModelNode.createObject('GenericConstraintCorrection', name='GCC', solverName='ldl')
+
+    # Definition des liens existant entre les elements rigides
+    MecaModelNode.createObject('MeshTopology', edges=['1 0',  
+                                                      '1 0',
+                                                      '2 0',
+                                                      '2 0',
+                                                      '3 0',
+                                                      '3 0'])
+    
+    # Localisation des reperes de chacun des elements rigides
+    mo = MecaModelNode.createObject('MechanicalObject', template='Rigid3d', showObject='true', position=['0      0           0        0 0 0 1',   
+                                                                                                    '0      -74.93      -50       0 0 0 1',
+                                                                                                    '64.89  37.46       -50       0 0 0 1',
+                                                                                                    '-64.89 37.46       -50       0 0 0 1'])
+                                                                                                    #externalForce='0 0 0 -10000000   0  0')
+                                                                                                                  #tx ty  tz      rx ry rz
+    
+    #Force externe en -z
+    extF = MecaModelNode.createObject('ConstantForceField',name='External Force', indices='0', forces="0 0 0  0 0 0 1")
+    
+    # Lien entre la commande et le robot
+    MyController(MecaModelNode, mo, extF)
+    
+    #Masses (grams): plataforme= 95.89    cenrtal=429.51    droite=448.07     gauche=448.07
+    MecaModelNode.createObject('UniformMass', name='Plataform Mass', indices='0', totalMass=['0.09589'])
+    MecaModelNode.createObject('UniformMass', name='Base Centralentral Mass',indices='1', totalMass='0.42951')
+    MecaModelNode.createObject('UniformMass', name='Base Droite Mass',indices='2', totalMass='0.44807')
+    MecaModelNode.createObject('UniformMass', name='Base Gauche Mass',indices='3', totalMass='0.44807')
+
+    
+    #Creation des beams entre les elements rigides
+    MecaModelNode.createObject('BeamInterpolation', name='interpolation', crossSectionShape='circular', radius='0.775', innerRadius='0.525', 
+    dofsAndBeamsAligned='false', defaultYoungModulus='80e6' , DOF0TransformNode0=['  2 0 0                  0.2706   -0.2706    0.6533    0.6533',     #BASE_CENTRAL
+                                                                                  ' -2 0 0                  0.2706   -0.2706    0.6533    0.6533',
+                                                                                  ' -1  1.73 0             -0.3696   -0.0990   -0.8924    0.2391',     #BASE_DROITE
+                                                                                  '  1 -1.73 0             -0.3696   -0.0990   -0.8924    0.2391',         #Rotation de 150 sur z et 45 sur y
+                                                                                  ' -1 -1.73 0             -0.0990   -0.3696   -0.2391    0.8924',     #BASE_GAUCHE
+                                                                                  '  1  1.73 0             -0.0990   -0.3696   -0.2391    0.8924'],        #Rotation de -30 sur z et 45 sur y
+                                                              DOF1TransformNode1=['  34 -24.93 0            0.2706   -0.2706    0.6533    0.6533',     #PLATAFORME_CENTRAL
+                                                                                  ' -34 -24.93 0            0.2706   -0.2706    0.6533    0.6533',         #rotation de -90 sur y et 45 sur z et 90 sur x
+                                                                                  '  4.59 41.91 0           0.3696    0.0990    0.8924   -0.2391',     #PLATAFORME_DROITE
+                                                                                  '  38.59 -16.98 0         0.3696    0.0990    0.8924   -0.2391',         #rotation de 30 sur z et -135 sur y 
+                                                                                  ' -38.59 -16.98 0        -0.0990   -0.3696   -0.2391    0.8924',     #PLATAFORME_GAUCHE
+                                                                                  ' -4.59   41.91 0        -0.0990   -0.3696   -0.2391    0.8924'])        #rotation de -30 sur z et -45 sur y
+    
+    #Fixe les deplacements des actionneurs suivant les directions voulues
+    MecaModelNode.createObject('FixedConstraint', name='ConstraintAct', indices='1 2 3') 
+    MecaModelNode.createObject('PartialFixedConstraint', name='ConstraintPlat', indices='0', fixedDirections='0 0 0 0 0 0')
+
+    
+    #Creation des jambres 
+    MecaModelNode.createObject('AdaptiveBeamForceFieldAndMass', massDensity=6.45e-6, name='LinkForceField', interpolation='@interpolation')
+ 
+ 
+    ########################################
+    # Creation des rendus visuels du robot #
+    ########################################
+    VisuRigidNode = MecaModelNode.createChild('PlataformMobile')
+    VisuRigidNode.createObject('MeshSTLLoader', filename='plataforme.stl', name='loader', translation='0 0 0', rotation='0.0 0.0 180', scale3d='1 1 1')
+    VisuRigidNode.createObject('OglModel', src='@loader', name='visu')
+    # VisuRigidNode.createObject('OglModel', src='@../loader', name='visu')
+    VisuRigidNode.createObject('RigidMapping', output='@visu', index='0')
+    
+    VisuRigidNode1 = MecaModelNode.createChild('Act1')
+    VisuRigidNode1.createObject('MeshSTLLoader', filename='base_central.stl', name='loader', translation='0 0 0', rotation='0.0 0.0 180', scale3d='1 1 1')
+    VisuRigidNode1.createObject('OglModel', src='@loader', name='visu')
+    VisuRigidNode1.createObject('RigidMapping', output='@visu', index='1')
+    
+    VisuRigidNode2 = MecaModelNode.createChild('Act2')
+    VisuRigidNode2.createObject('MeshSTLLoader', filename='base_droite.stl', name='loader', translation='0 0 0', rotation='0.0 0.0 180.0', scale3d='1 1 1')
+    VisuRigidNode2.createObject('OglModel', src='@loader', name='visu')
+    VisuRigidNode2.createObject('RigidMapping', output='@visu', index='2')
+    
+    VisuRigidNode3 = MecaModelNode.createChild('Act3')
+    VisuRigidNode3.createObject('MeshSTLLoader', filename='base_gauche.stl', name='loader', translation='0 0 0', rotation='90 0.0 -90.0', scale3d='1 1 1')
+    VisuRigidNode3.createObject('OglModel', src='@loader', name='visu')
+    VisuRigidNode3.createObject('RigidMapping', output='@visu', index='3')
+    
+    return rootNode

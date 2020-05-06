@@ -1,0 +1,256 @@
+import Sofa, numpy
+from splib.constants import Key
+from math import sin, cos, sqrt
+from splib.animation import AnimationManager
+
+PI = 3.14159265359
+#Etablissement de la tolerance du position et rotation 
+tol_pos=0.01
+tol_rot=0.05
+
+
+######################################################
+#Definition du controleur pour les mouvements du robot 
+######################################################
+class MyController(Sofa.PythonScriptController):
+        def __init__(self, node, mecaObj, PosAct, posEff, moEN):
+                self.node = node
+                self.moGN = mecaObj
+                self.PosAct=PosAct
+                self.maxDispx=abs(self.PosAct[0].maxPositiveDisp)
+                self.maxDispy=abs(self.PosAct[1].maxPositiveDisp)
+                self.posEff = posEff
+                self.moEN=moEN
+                # i=0
+                # self.i=i
+                self.flag=0
+                step=1
+                self.step=step
+                act=4
+                self.act=act
+                case=0
+                self.case=case
+
+
+        def onBeginAnimationStep(self,dt):
+            posListBuf = self.moGN.position;
+            rotListBuf = self.moGN.rotation;
+            
+            #Obtention du vecteur de la position de chaque actionneur
+            disp=[abs(self.PosAct[0].displacement), abs(self.PosAct[1].displacement), abs(self.PosAct[2].displacement), abs(self.PosAct[3].displacement), abs(self.PosAct[4].displacement), abs(self.PosAct[5].displacement)]
+            
+            #Obtention du vecteur de l'erreur entre goalNode et effectorNode (delta)       
+            error=abs(numpy.array(self.posEff.delta))
+            
+            ret = myfunc(error, disp, self.maxDispx, self.maxDispy)
+            
+            if(self.act>5):
+                self.case=3
+
+            if (self.case == 0): #Premiere case: Aller au position initiale
+                # print"case = ",self.case
+                posListBuf=[0,0,0,0,0,0,1]
+                rotListBuf=[0,0,0]
+                self.moGN.position = posListBuf; 
+                self.moGN.rotation = rotListBuf;
+                #On attends jusqu'a l'erreur est presque null pour commencer
+                if (error[0]<tol_pos and error[1]<tol_pos and error[2]<tol_pos and error[3]<tol_rot and error[4]<tol_rot and error[5]<tol_rot):
+                    self.case=1
+                    print"case = ",self.case
+                    
+            elif self.case == 1: #Mouvement sur l'actionneur jusqu'en arrivant au max displacement 
+                if ret==1:
+                    #Increment de la position en "step"
+                    if self.act<=2:
+                        posListBuf[0][self.act] = self.moGN.position[0][self.act]+self.step;
+                    elif self.act<=5:
+                        rotListBuf[0][self.act-3] = self.moGN.rotation[0][self.act-3]+self.step;
+                    print("Position vector: ",posListBuf)
+                    print("Rotation Vector: ",rotListBuf)
+                elif ret==2: 
+                    #sauvgarder la position de l'EffectorNode
+                    effecteur_pos=self.moEN.position
+                    print"Maximal position arrivee. Position de l'effectorNode = ",effecteur_pos
+                    if self.act==0:
+                        f = open("espace de travail.txt", "w")
+                        f.write('Max displacement en act[' + str(self.act) +'] (quaternion) = ' + str(effecteur_pos) + '\n')
+                        f.write('Max displacement en act[' + str(self.act) +'] (euler angles) = ' + str(posListBuf) +  str(rotListBuf) + '\n')
+                        f.close()
+                    elif self.act>0:
+                        f = open("espace de travail.txt", "a")
+                        f.write('Max displacement en act[' + str(self.act) +'] (quaternion) = ' + str(effecteur_pos) + '\n')
+                        f.write('Max displacement en act[' + str(self.act) +'] (euler angles) = ' + str(posListBuf) +  str(rotListBuf) + '\n')
+                        f.close()
+                    
+                    #Aller au changement de direction (case 2)
+                    if self.flag==0:
+                        self.case=2
+                    #Aller au position initiale (case 1), parce que on a deja trouve le max disp dans les deux directions. 
+                    elif self.flag==1:
+                        self.act=self.act+1
+                        self.step=-self.step
+                        self.flag=0
+                        self.case=0
+                        print"case = ",self.case
+                        print"act = ",self.act
+                        
+            elif self.case == 2: #Changement de la direction de mouvement pour trouver l'autre cote du meme actionneur
+                print"case = ",self.case
+                self.step=-self.step
+                self.flag=1
+                print"Changement de direction = ",self.step
+                self.case=0
+                
+            elif self.case==3:
+                print "Espace de travail terminee"
+            
+            self.moGN.position = posListBuf; 
+            self.moGN.rotation = rotListBuf;
+
+
+######################################################
+# Fonction pour comparer l'erreur (entre le goalNode et l'effectorNode) et la tolerance permis
+######################################################
+# Pour trouver l'espace du travail on doit verifier deux conditions: 
+# 1.- Que tout les actionneur sont dedans leur zone de travail (+/-25 pour "x" et +/- 50 pour "y")
+# 2.- Que le robot peut arriver au point desire, a travers de la comparaison entre la tolerance (tol) et la difference entre le goalNode et la position de l'effectorNode (error)
+# Signifie du valeur de ret:
+#   ret=0 -> l'erreur N'EST PAS plus petit que la tolerance, mais les actionneurs n'ont pas arrive au maximal displacement
+#   ret=1 -> l'erreur EST plus petit que la tolerance,       mais les actionneurs n'ont pas arrive au maximal displacement
+#   ret=2 -> un des actionneurs a arrive au maximal displacement 
+def myfunc(error,disp,maxDispx,maxDispy):
+    ret=2
+    if(disp[0]<maxDispx and disp[1]<maxDispy and disp[2]<maxDispx and disp[3]<maxDispy and disp[4]<maxDispx and disp[5]<maxDispy):
+        if (error[0]<tol_pos and error[1]<tol_pos and error[2]<tol_pos and error[3]<tol_rot and error[4]<tol_rot and error[5]<tol_rot):
+            ret=1
+            return ret
+        ret=0
+    return ret
+
+
+######################################################
+# Definition de la scene du robot
+######################################################
+def createScene(rootNode):		#Creation des nodes en Sofa
+    
+    rootNode.gravity=('0 0 0')
+    rootNode.createObject('RequiredPlugin',pluginName='SoftRobots BeamAdapter SofaPython SofaSparseSolver')
+    
+    AnimationManager(rootNode)
+    
+    rootNode.createObject('VisualStyle', displayFlags='showVisualModels showBehaviorModels hideCollisionModels hideMappings showForceFields showInteractionForceFields')
+    rootNode.createObject('FreeMotionAnimationLoop')
+    rootNode.createObject('QPInverseProblemSolver')
+    # rootNode.createObject('PauseAnimation')
+    
+    #Definition du GoalNode pour faire la commande
+    goalNode = rootNode.createChild('GoalNode')
+    goalNode.createObject('EulerImplicitSolver', rayleighStiffness=0.02, printLog=False, rayleighMass=0.01, firstOrder='1')
+    goalNode.createObject('SparseLDLSolver', name='ldl')
+    moGN = goalNode.createObject('MechanicalObject', name='mo_goal', template='Rigid3', position='0 0 0  0 0 0 1') 
+    goalNode.createObject('UniformMass')
+    goalNode.createObject('GenericConstraintCorrection', name='GCC', solverName='ldl')
+   
+    
+    ########################################
+    # Creation du modele mecanique du robot#
+    ########################################
+    MecaModelNode = rootNode.createChild('MecaModel')
+    MecaModelNode.createObject('EulerImplicitSolver', rayleighStiffness=0.2, printLog=False, rayleighMass=0.1)      #Parametres de convergence
+    MecaModelNode.createObject('SparseLDLSolver', name='ldl')
+    MecaModelNode.createObject('GenericConstraintCorrection', name='GCC', solverName='ldl')
+
+    #Definition des liens existant entre les elements rigides
+    MecaModelNode.createObject('MeshTopology', edges=['1 0',  
+                                              '1 0',
+                                              '2 0',
+                                              '2 0',
+                                              '3 0',
+                                              '3 0'])
+    
+    MecaModelNode.createObject('MechanicalObject', template='Rigid3d', showObject='true', position=['0      0           0        0 0 0 1',   # localisation des reperes de chacun des elements rigides
+                                                                                                    '0      -74.93      -50       0 0 0 1',
+                                                                                                    '64.89  37.46       -50       0 0 0 1',
+                                                                                                    '-64.89 37.46       -50       0 0 0 1']) 
+    
+    
+    #Masses: plataforme= 95.89 g    cenrtal=429.51    droite=448.07     gauche=448.07
+    MecaModelNode.createObject('UniformMass', name='Plataform Mass', indices='0', totalMass=['95.89 1 2 3'])
+    MecaModelNode.createObject('UniformMass', name='Base Centralentral Mass',indices='1', totalMass='0.42951')
+    MecaModelNode.createObject('UniformMass', name='Base Droite Mass',indices='2', totalMass='0.44807')
+    MecaModelNode.createObject('UniformMass', name='Base Gauche Mass',indices='3', totalMass='0.44807')
+
+    
+    #Creation des beams entre les elements rigides
+    MecaModelNode.createObject('BeamInterpolation', name='interpolation', crossSectionShape='circular', radius='0.775', innerRadius='0.525', 
+    dofsAndBeamsAligned='false', defaultYoungModulus='80e6' , DOF0TransformNode0=['  2 0 0                  0.2706   -0.2706    0.6533    0.6533',     #BASE_CENTRAL
+                                                                                  ' -2 0 0                  0.2706   -0.2706    0.6533    0.6533',
+                                                                                  ' -1  1.73 0             -0.3696   -0.0990   -0.8924    0.2391',     #BASE_DROITE
+                                                                                  '  1 -1.73 0             -0.3696   -0.0990   -0.8924    0.2391',         #Rotation de 150 sur z et 45 sur y
+                                                                                  ' -1 -1.73 0             -0.0990   -0.3696   -0.2391    0.8924',     #BASE_GAUCHE
+                                                                                  '  1  1.73 0             -0.0990   -0.3696   -0.2391    0.8924'],        #Rotation de -30 sur z et 45 sur y
+                                                              DOF1TransformNode1=['  34 -24.93 0            0.2706   -0.2706    0.6533    0.6533',     #PLATAFORME_CENTRAL
+                                                                                  ' -34 -24.93 0            0.2706   -0.2706    0.6533    0.6533',         #rotation de -90 sur y et 45 sur z et 90 sur x
+                                                                                  '   4.59 41.91 0          0.3696    0.0990    0.8924   -0.2391',     #PLATAFORME_DROITE
+                                                                                  '  38.59 -16.98 0         0.3696    0.0990    0.8924   -0.2391',         #rotation de 30 sur z et -135 sur y 
+                                                                                  ' -38.59 -16.98 0        -0.0990   -0.3696   -0.2391    0.8924',     #PLATAFORME_GAUCHE
+                                                                                  ' -4.59   41.91 0        -0.0990   -0.3696   -0.2391    0.8924'])        #rotation de -30 sur z et -45 sur y
+    
+    #Fixe les deplacements des actionneurs suivant les directions voulues
+    MecaModelNode.createObject('PartialFixedConstraint', name='ConstraintAct', indices='1 2 3', fixedDirections='0 0 1 1 1 1') 
+    MecaModelNode.createObject('PartialFixedConstraint', name='ConstraintPlat', indices='0', fixedDirections='0 0 0 0 0 0')
+
+    deplacementActionneurx=25  #definicion de l'espace de travail de chaque actinonateur
+    deplacementActionneury=50  #definicion de l'espace de travail de chaque actinonateur
+    forceActionneur=20e3         #(Kg*mm)/s^2
+    #Definition de chaque actinonateur en correspondace avec son direction
+    PosAct1x = MecaModelNode.createObject('SlidingActuator', name='Act1x',template='Rigid3d', indices='1', direction='1 0 0 0 0 0', maxForce=forceActionneur, minForce=-forceActionneur, maxDispVariation='0.1', maxPositiveDisp=deplacementActionneurx, maxNegativeDisp=deplacementActionneurx)
+    PosAct1y= MecaModelNode.createObject('SlidingActuator', name='Act1y',template='Rigid3d', indices='1', direction='0 1 0 0 0 0', maxForce=forceActionneur, minForce=-forceActionneur, maxDispVariation='0.1', maxPositiveDisp=deplacementActionneury, maxNegativeDisp=deplacementActionneury)
+    PosAct2x = MecaModelNode.createObject('SlidingActuator', name='Act2x',template='Rigid3d', indices='2', direction='1 0 0 0 0 0', maxForce=forceActionneur, minForce=-forceActionneur, maxDispVariation='0.1', maxPositiveDisp=deplacementActionneurx, maxNegativeDisp=deplacementActionneurx)
+    PosAct2y = MecaModelNode.createObject('SlidingActuator', name='Act2y',template='Rigid3d', indices='2', direction='0 1 0 0 0 0', maxForce=forceActionneur, minForce=-forceActionneur, maxDispVariation='0.1', maxPositiveDisp=deplacementActionneury, maxNegativeDisp=deplacementActionneury)
+    PosAct3x = MecaModelNode.createObject('SlidingActuator', name='Act3x',template='Rigid3d', indices='3', direction='1 0 0 0 0 0', maxForce=forceActionneur, minForce=-forceActionneur, maxDispVariation='0.1', maxPositiveDisp=deplacementActionneurx, maxNegativeDisp=deplacementActionneurx)
+    PosAct3y = MecaModelNode.createObject('SlidingActuator', name='Act3y',template='Rigid3d', indices='3', direction='0 1 0 0 0 0', maxForce=forceActionneur, minForce=-forceActionneur, maxDispVariation='0.1', maxPositiveDisp=deplacementActionneury, maxNegativeDisp=deplacementActionneury)
+    #Vecteur qu'a l'info des actionneurs
+    PosAct=[PosAct1x,PosAct1y,PosAct2x,PosAct2y,PosAct3x,PosAct3y]
+    
+    #Lien entre le goalNode et l'effecteur (plataforme)
+    EffectorNode = MecaModelNode.createChild('EffectorNode')
+    moEN = EffectorNode.createObject('MechanicalObject', template='Rigid3', position='0 0 0  0 0 0 1')
+    EffectorNode.createObject('Monitor', name='Effector_Position', template='Rigid3', listening="1", indices="0", showTrajectories="1", TrajectoriesPrecision="0.1", TrajectoriesColor="1 0 1 1", sizeFactor="1", ExportPositions="true")
+    EffectorNode.createObject('RigidRigidMapping')
+    EffectorNode.createObject('TransformEngine', template='Rigid3', input_position='0 0 0  0 0 0 1', translation='@../../GoalNode/mo_goal.position', rotation='@../../GoalNode/mo_goal.rotation')
+    posEff = EffectorNode.createObject('PositionEffector', template='Rigid3', useDirections='1 1 1 1 1 1 1', indices='0', effectorGoal='@[-1].output_position')
+    EffectorNode.createObject('TSphereModel', radius='3')
+   
+    
+    # Lien entre la commande et le robot
+    MyController(goalNode, moGN, PosAct, posEff, moEN)
+    
+    #Creation des jambres 
+    MecaModelNode.createObject('AdaptiveBeamForceFieldAndMass', massDensity=0.000155, name='LinkForceField', interpolation='@interpolation')
+ 
+    ########################################
+    # Creation des rendus visuels du robot #
+    ########################################
+    VisuRigidNode = MecaModelNode.createChild('PlataformMobile')
+    VisuRigidNode.createObject('MeshSTLLoader', filename='plataforme.stl', name='loader', translation='0 0 0', rotation='0.0 0.0 180', scale3d='1 1 1')
+    VisuRigidNode.createObject('OglModel', src='@loader', name='visu')
+    # VisuRigidNode.createObject('OglModel', src='@../loader', name='visu')
+    VisuRigidNode.createObject('RigidMapping', output='@visu', index='0')
+    
+    VisuRigidNode1 = MecaModelNode.createChild('Act1')
+    VisuRigidNode1.createObject('MeshSTLLoader', filename='base_central.stl', name='loader', translation='0 0 0', rotation='0.0 0.0 180', scale3d='1 1 1')
+    VisuRigidNode1.createObject('OglModel', src='@loader', name='visu')
+    VisuRigidNode1.createObject('RigidMapping', output='@visu', index='1')
+    
+    VisuRigidNode2 = MecaModelNode.createChild('Act2')
+    VisuRigidNode2.createObject('MeshSTLLoader', filename='base_droite.stl', name='loader', translation='0 0 0', rotation='0.0 0.0 180.0', scale3d='1 1 1')
+    VisuRigidNode2.createObject('OglModel', src='@loader', name='visu')
+    VisuRigidNode2.createObject('RigidMapping', output='@visu', index='2')
+    
+    VisuRigidNode3 = MecaModelNode.createChild('Act3')
+    VisuRigidNode3.createObject('MeshSTLLoader', filename='base_gauche.stl', name='loader', translation='0 0 0', rotation='90 0.0 -90.0', scale3d='1 1 1')
+    VisuRigidNode3.createObject('OglModel', src='@loader', name='visu')
+    VisuRigidNode3.createObject('RigidMapping', output='@visu', index='3')
+    
+    return rootNode
